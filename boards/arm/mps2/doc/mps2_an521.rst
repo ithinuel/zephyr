@@ -323,6 +323,7 @@ MPS2+ AN521 has several clocks connected:
 
    - MAINCLK : 20MHz
    - SYSCLK : 20MHz
+   - Peripheral clock (UARTs) : 25MHz
    - S32KCLK : 32kHz
    - TRACECLK : 20MHz
    - SWCLKTCK : 20MHz

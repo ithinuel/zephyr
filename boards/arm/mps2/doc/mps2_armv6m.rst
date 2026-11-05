@@ -188,7 +188,7 @@ For more details please refer to `MPS2 Technical Reference Manual (TRM)`_.
 System Clock
 ============
 
-The V2M MPS2 main clock is 24 MHz.
+The V2M MPS2 main clock is 25 MHz.
 
 Serial Port
 ===========
