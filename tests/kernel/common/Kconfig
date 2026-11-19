@@ -5,4 +5,8 @@ configdefault MAX_THREAD_BYTES
 	default 5 if MP_MAX_NUM_CPUS > 4
 	default 3
 
+# Allow SVCall to preempt SysTick when the timer callback calls irq_offload().
+configdefault CORTEX_M_SYSTICK_INTERRUPT_PRIORITY
+	default 1 if ARMV6_M_ARMV8_M_BASELINE && IRQ_OFFLOAD_NESTED
+
 source "Kconfig.zephyr"
