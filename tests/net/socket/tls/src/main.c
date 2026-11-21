@@ -1990,9 +1990,10 @@ ZTEST(net_socket_tls, test_deferred_handshake_poll_small_window_no_data)
 	timestamp = k_uptime_get_32();
 	fds[0].fd = new_sock;
 	fds[0].events = ZSOCK_POLLIN;
-	ret = zsock_poll(fds, 1, 150);
+	ret = zsock_poll(fds, 1, CONFIG_NET_SOCKETS_TLS_CONNECT_TIMEOUT);
 	zassert_equal(ret, 0, "poll() should've timed out (revents 0x%x)", fds[0].revents);
-	zassert_true(k_uptime_get_32() - timestamp >= 150, "poll() returned too early");
+	zassert_true(k_uptime_get_32() - timestamp >= CONFIG_NET_SOCKETS_TLS_CONNECT_TIMEOUT,
+		     "poll() returned too early");
 
 	test_work_wait(&test_data.work);
 
