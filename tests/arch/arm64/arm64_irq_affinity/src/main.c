@@ -120,7 +120,8 @@ ZTEST(arm64_irq_affinity, test_irq_affinity)
 	       irq, arch_num_cpus());
 
 	k_sem_init(&irq_sem, 0, 1);
-	irq_connect_dynamic(irq, IRQ_DEFAULT_PRIORITY, affinity_test_isr, NULL, 0);
+	/* Each software-pended SPI should deliver one interrupt, with no peripheral to clear. */
+	irq_connect_dynamic(irq, IRQ_DEFAULT_PRIORITY, affinity_test_isr, NULL, IRQ_TYPE_EDGE);
 
 	int num_cpus = arch_num_cpus();
 
