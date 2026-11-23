@@ -1,0 +1,10 @@
+/*
+ * SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates
+ * <open-source-office@arm.com>
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/* The three-sector garbage collection test uses write counts for 1 KiB sectors. */
+&flash_sim0 {
+	erase-block-size = <1024>;
+};
