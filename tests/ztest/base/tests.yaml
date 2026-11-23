@@ -22,6 +22,7 @@ tests:
       - userspace
     extra_configs:
       - CONFIG_TEST_USERSPACE=y
+      - platform:mps2/an383:CONFIG_MAIN_STACK_SIZE=2048
     integration_platforms:
       - qemu_x86
   testing.ztest.base.verbose_1:

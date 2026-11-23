@@ -28,6 +28,7 @@ tests:
       - CONFIG_NET_BUF_VARIABLE_DATA_SIZE=y
       - CONFIG_NET_PKT_BUF_RX_DATA_POOL_SIZE=4096
       - CONFIG_NET_PKT_BUF_TX_DATA_POOL_SIZE=4096
+      - platform:mps2/an383:CONFIG_NET_TCP_WORKQ_STACK_SIZE=1280
   net.tcp.max_window:
     # 128 * 1536 / 3 is 65536, the point where a 16 bit window field wraps.
     platform_allow:
