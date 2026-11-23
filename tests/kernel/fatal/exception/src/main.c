@@ -50,6 +50,31 @@ volatile int rv;
 
 static ZTEST_DMEM volatile int expected_reason = -1;
 
+#if defined(CONFIG_ARMV6_M_ARMV8_M_BASELINE) && defined(CONFIG_MPU_STACK_GUARD) && \
+	!defined(CONFIG_STACK_SENTINEL)
+#define TEST_ARM_BASELINE_MPU_GUARD 1
+static ZTEST_DMEM volatile uintptr_t last_stack_local;
+#ifdef CONFIG_USERSPACE
+static bool expect_priv_stack;
+#endif
+
+static bool worker_reached_stack_limit(void)
+{
+	uintptr_t limit = alt_thread.stack_info.start;
+
+#ifdef CONFIG_USERSPACE
+	if (expect_priv_stack) {
+		limit = alt_thread.arch.priv_stack_start;
+	}
+#endif
+	/* The last completed recursive prologue must have got within one guard
+	 * width of the bottom of the stack exercised by this test.
+	 */
+	return (last_stack_local >= limit) &&
+	       ((last_stack_local - limit) < MPU_GUARD_ALIGN_AND_SIZE);
+}
+#endif
+
 void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *pEsf)
 {
 	TC_PRINT("Caught system error -- reason %d\n", reason);
@@ -66,6 +91,19 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *pEsf)
 		k_fatal_halt(reason);
 	}
 
+#ifdef TEST_ARM_BASELINE_MPU_GUARD
+	if (expected_reason == K_ERR_STACK_CHK_FAIL) {
+		/* Armv6-M and Armv8-M Baseline lack MemManage fault status. Require
+		 * evidence from the worker before accepting a generic HardFault.
+		 */
+		if (!worker_reached_stack_limit()) {
+			TC_ERROR("Missing evidence of stack exhaustion in the worker\n");
+			TC_END_REPORT(TC_FAIL);
+			k_fatal_halt(reason);
+		}
+		expected_reason = K_ERR_CPU_EXCEPTION;
+	}
+#endif
 	if (reason != expected_reason) {
 		printk("Wrong crash type got %d expected %d\n", reason,
 		       expected_reason);
@@ -216,6 +254,9 @@ TOOLCHAIN_DISABLE_WARNING(TOOLCHAIN_WARNING_INFINITE_RECURSION)
 
 __no_optimization int stack_smasher(int val)
 {
+#ifdef TEST_ARM_BASELINE_MPU_GUARD
+	last_stack_local = (uintptr_t)&val;
+#endif
 	return stack_smasher(val * 2) + stack_smasher(val * 3);
 }
 
@@ -292,6 +333,12 @@ void user_priv_stack_hw_overflow(void *p1, void *p2, void *p3)
 
 void check_stack_overflow(k_thread_entry_t handler, uint32_t flags)
 {
+#ifdef TEST_ARM_BASELINE_MPU_GUARD
+	last_stack_local = 0U;
+#ifdef CONFIG_USERSPACE
+	expect_priv_stack = (handler == user_priv_stack_hw_overflow);
+#endif
+#endif
 	/*
 	 * blow_up_stack() sets this too, but a stack limit checked on frame
 	 * allocation (Hexagon FRAMELIMIT) faults in its prologue, before the
@@ -314,6 +361,10 @@ void check_stack_overflow(k_thread_entry_t handler, uint32_t flags)
 			NULL, NULL, NULL, K_PRIO_PREEMPT(PRIORITY), flags,
 			K_NO_WAIT);
 
+#ifdef TEST_ARM_BASELINE_MPU_GUARD
+	zassert_ok(k_thread_join(&alt_thread, K_NO_WAIT), "overflow thread is still running");
+	zassert_equal(expected_reason, -1, "expected fault was not observed");
+#endif
 	zassert_not_equal(rv, TC_FAIL, "thread was not aborted");
 }
 #endif /* !CONFIG_ARCH_POSIX */

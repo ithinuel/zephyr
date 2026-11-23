@@ -787,6 +787,8 @@ ZTEST(arm_interrupt, test_arm_interrupt)
 	 * entry will make PSP descend below the limit and into the MPU guard
 	 * section (or beyond the address pointed by PSPLIM in ARMv8-M MCUs).
 	 */
+	uint32_t stacking_psp = _current->stack_info.start + 0x10U;
+
 #if defined(CONFIG_FPU) && defined(CONFIG_FPU_SHARING) && defined(CONFIG_MPU_STACK_GUARD)
 #define FPU_STACK_EXTRA_SIZE 0x48
 	/* If an FP context is present, we should not set the PSP
@@ -794,11 +796,17 @@ ZTEST(arm_interrupt, test_arm_interrupt)
 	 * the ESF might corrupt kernel memory, making it not
 	 * possible to continue the test execution.
 	 */
-	uint32_t fp_extra_size = (__get_CONTROL() & CONTROL_FPCA_Msk) ? FPU_STACK_EXTRA_SIZE : 0;
-	__set_PSP(_current->stack_info.start + 0x10 + fp_extra_size);
-#else
-	__set_PSP(_current->stack_info.start + 0x10);
+	stacking_psp += (__get_CONTROL() & CONTROL_FPCA_Msk) ? FPU_STACK_EXTRA_SIZE : 0;
 #endif
+	__set_PSP(stacking_psp);
+
+	/* Armv6-M and Armv8-M Baseline lack stacking fault status. Expect a generic fault
+	 * only after confirming the low PSP while the test IRQ is masked and pending.
+	 */
+	if (IS_ENABLED(CONFIG_ARMV6_M_ARMV8_M_BASELINE) && IS_ENABLED(CONFIG_MPU_STACK_GUARD) &&
+	    !IS_ENABLED(CONFIG_STACK_SENTINEL) && (__get_PSP() == stacking_psp)) {
+		expected_reason = K_ERR_CPU_EXCEPTION;
+	}
 
 	__enable_irq();
 	barrier_dsync_fence_full();
