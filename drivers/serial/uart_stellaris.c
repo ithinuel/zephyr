@@ -71,8 +71,9 @@ struct _uart {
 struct uart_stellaris_config {
 	volatile struct _uart *uart;
 	uint32_t sys_clk_freq;
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
+#ifdef CONFIG_UART_STELLARIS_INTERRUPT_DRIVEN
 	uart_irq_config_func_t irq_config_func;
+	unsigned int irqn;
 #endif
 };
 
@@ -80,7 +81,7 @@ struct uart_stellaris_config {
 struct uart_stellaris_dev_data_t {
 	uint32_t baud_rate;	/* Baud rate */
 
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
+#ifdef CONFIG_UART_STELLARIS_INTERRUPT_DRIVEN
 	uart_irq_callback_user_data_t cb;	/**< Callback function pointer */
 	void *cb_data;	/**< Callback function arg */
 #endif
@@ -97,8 +98,6 @@ struct uart_stellaris_dev_data_t {
 #define UARTLCRH_WLEN 0x00000060
 
 #define UARTCTL_UARTEN 0x00000001
-#define UARTCTL_LBE 0x00000800
-#define UARTCTL_TXEN 0x00000100
 #define UARTCTL_RXEN 0x00000200
 
 #define UARTTIM_RXIM 0x00000010
@@ -230,7 +229,7 @@ static int uart_stellaris_init(const struct device *dev)
 	line_control_defaults_set(dev);
 	enable(dev);
 
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
+#ifdef CONFIG_UART_STELLARIS_INTERRUPT_DRIVEN
 	config->irq_config_func(dev);
 #endif
 
@@ -244,7 +243,7 @@ static int uart_stellaris_init(const struct device *dev)
  *
  * @param dev UART device struct
  *
- * @return 0 if ready to transmit, 1 otherwise
+ * @return Nonzero if the transmit buffer is empty, 0 otherwise
  */
 static int poll_tx_ready(const struct device *dev)
 {
@@ -297,7 +296,7 @@ static void uart_stellaris_poll_out(const struct device *dev,
 	config->uart->dr = (uint32_t)c;
 }
 
-#if CONFIG_UART_INTERRUPT_DRIVEN
+#ifdef CONFIG_UART_STELLARIS_INTERRUPT_DRIVEN
 
 /**
  * @brief Fill FIFO with data
@@ -352,49 +351,19 @@ static int uart_stellaris_fifo_read(const struct device *dev,
  */
 static void uart_stellaris_irq_tx_enable(const struct device *dev)
 {
-	static uint8_t first_time =
-		1U;	   /* used to allow the first transmission */
-	uint32_t saved_ctl;  /* saved UARTCTL (control) register */
-	uint32_t saved_ibrd; /* saved UARTIBRD (integer baud rate) register */
-	uint32_t saved_fbrd; /* saved UARTFBRD (fractional baud rate) register
-				*/
 	const struct uart_stellaris_config *config = dev->config;
-
-	if (first_time) {
-		/*
-		 * The Tx interrupt will not be set when transmission is first
-		 * enabled.
-		 * A character has to be transmitted before Tx interrupts will
-		 * work,
-		 * so send one via loopback mode.
-		 */
-		first_time = 0U;
-
-		/* save current control and baud rate settings */
-		saved_ctl = config->uart->ctl;
-		saved_ibrd = config->uart->ibrd;
-		saved_fbrd = config->uart->fbrd;
-
-		/* send a character with default settings via loopback */
-		disable(dev);
-		config->uart->fbrd = 0U;
-		config->uart->ibrd = 1U;
-		config->uart->lcrh = 0U;
-		config->uart->ctl = (UARTCTL_UARTEN | UARTCTL_TXEN | UARTCTL_LBE);
-		config->uart->dr = 0U;
-
-		while (config->uart->fr & UARTFR_BUSY) {
-		}
-
-		/* restore control and baud rate settings */
-		disable(dev);
-		config->uart->ibrd = saved_ibrd;
-		config->uart->fbrd = saved_fbrd;
-		line_control_defaults_set(dev);
-		config->uart->ctl = saved_ctl;
-	}
+	unsigned int key = irq_lock();
 
 	config->uart->im |= UARTTIM_TXIM;
+
+	/*
+	 * The UART signals a transition to empty. If it was already empty,
+	 * pend the IRQ so the callback can write the first byte.
+	 */
+	if (((config->uart->mis & UARTMIS_TXMIS) == 0U) && (poll_tx_ready(dev) != 0)) {
+		k_irq_set_pending(config->irqn);
+	}
+	irq_unlock(key);
 }
 
 /**
@@ -410,17 +379,18 @@ static void uart_stellaris_irq_tx_disable(const struct device *dev)
 }
 
 /**
- * @brief Check if Tx IRQ has been raised
+ * @brief Check if TX interrupts are enabled and the UART can accept a byte
  *
  * @param dev UART device struct
  *
- * @return 1 if a Tx IRQ is pending, 0 otherwise
+ * @return 1 if ready to transmit, 0 otherwise
  */
 static int uart_stellaris_irq_tx_ready(const struct device *dev)
 {
 	const struct uart_stellaris_config *config = dev->config;
 
-	return ((config->uart->mis & UARTMIS_TXMIS) == UARTMIS_TXMIS);
+	return ((config->uart->im & UARTTIM_TXIM) != 0U) &&
+	       ((config->uart->fr & UARTFR_TXFF) == 0U);
 }
 
 /**
@@ -496,10 +466,7 @@ static void uart_stellaris_irq_err_disable(const struct device *dev)
  */
 static int uart_stellaris_irq_is_pending(const struct device *dev)
 {
-	const struct uart_stellaris_config *config = dev->config;
-
-	/* Look only at Tx and Rx data interrupt flags */
-	return ((config->uart->mis & (UARTMIS_RXMIS | UARTMIS_TXMIS)) ? 1 : 0);
+	return (uart_stellaris_irq_tx_ready(dev) != 0) || (uart_stellaris_irq_rx_ready(dev) != 0);
 }
 
 /**
@@ -534,14 +501,14 @@ static void uart_stellaris_isr(const struct device *dev)
 	}
 }
 
-#endif /* CONFIG_UART_INTERRUPT_DRIVEN */
+#endif /* CONFIG_UART_STELLARIS_INTERRUPT_DRIVEN */
 
 
 static DEVICE_API(uart, uart_stellaris_driver_api) = {
 	.poll_in = uart_stellaris_poll_in,
 	.poll_out = uart_stellaris_poll_out,
 
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
+#ifdef CONFIG_UART_STELLARIS_INTERRUPT_DRIVEN
 
 	.fifo_fill = uart_stellaris_fifo_fill,
 	.fifo_read = uart_stellaris_fifo_read,
@@ -569,13 +536,14 @@ static DEVICE_API(uart, uart_stellaris_driver_api) = {
 	}
 
 #define UART_STELLARIS_INIT(n)                                                                     \
-	IF_ENABLED(CONFIG_UART_INTERRUPT_DRIVEN, (UART_STELLARIS_IRQ_INIT(n)))                     \
+	IF_ENABLED(CONFIG_UART_STELLARIS_INTERRUPT_DRIVEN, (UART_STELLARIS_IRQ_INIT(n)))           \
                                                                                                    \
 	static const struct uart_stellaris_config uart_stellaris_dev_cfg_##n = {                   \
 		.uart = (volatile struct _uart *)DT_INST_REG_ADDR(n),                              \
 		.sys_clk_freq = DT_INST_PROP_BY_PHANDLE(n, clocks, clock_frequency),               \
-		IF_ENABLED(CONFIG_UART_INTERRUPT_DRIVEN,                                           \
-			 (.irq_config_func = irq_config_func_##n,)) };                             \
+		IF_ENABLED(CONFIG_UART_STELLARIS_INTERRUPT_DRIVEN,                                 \
+			   (.irq_config_func = irq_config_func_##n, .irqn = DT_INST_IRQN(n),))     \
+	};                                                                                         \
                                                                                                    \
 	static struct uart_stellaris_dev_data_t uart_stellaris_dev_data_##n = {                    \
 		.baud_rate = DT_INST_PROP(n, current_speed),                                       \
